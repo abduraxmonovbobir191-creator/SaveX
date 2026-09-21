@@ -1,3 +1,0 @@
-BOT_TOKEN=8798719790:AAFbW2fMhzLY8_Xzzi6SM9jxi1cqV9A1puY 
-ADMIN_IDS=123456789
-DATABASE_URL=sqlite+aiosqlite:///./storage/savex.db
