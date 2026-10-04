@@ -6,3 +6,6 @@ __pycache__/
 
 .enves
 storage/*.db
+
+storage/
+*.bak*

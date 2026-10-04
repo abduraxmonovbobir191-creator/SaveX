@@ -50,3 +50,9 @@ def help_kb() -> InlineKeyboardMarkup:
     kb.button(text="📩 Adminga xabar yuborish", callback_data="feedback:start")
     kb.adjust(1)
     return kb.as_markup()
+
+
+def mp3_kb(token: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎵 MP3 yuklab olish", callback_data=f"dl:{token}:audio")
+    return kb.as_markup()

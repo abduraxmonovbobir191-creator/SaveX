@@ -1,13 +1,14 @@
 import asyncio
 import os
 import uuid
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from aiogram import Router, F, Bot
 from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InputMediaVideo
 import yt_dlp
 from app.database.session import async_session
 from app.database import crud
-from app.keyboards.inline import quality_kb
+from app.keyboards.inline import quality_kb, mp3_kb
 from app.keyboards.channels import channels_gate_kb
 from app.services.channels import get_missing_channels
 from app.handlers.user.favorites import register_favorite_item, favorite_button
@@ -15,7 +16,7 @@ from app.services.downloader.router import detect_platform, get_downloader
 
 router = Router()
 
-MAX_UPLOAD_BYTES = 49 * 1024 * 1024
+MAX_UPLOAD_BYTES = 1950 * 1024 * 1024
 SHORT_VIDEO_SECONDS = 180
 EXECUTOR = ThreadPoolExecutor(max_workers=8)
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(5)
@@ -30,6 +31,7 @@ def _base_opts():
             "socket_timeout": 25, "retries": 2, "ignoreerrors": True}
     if os.path.exists(COOKIES_PATH):
         opts["cookiefile"] = COOKIES_PATH
+    opts["max_filesize"] = MAX_UPLOAD_BYTES
     return opts
 
 
@@ -112,6 +114,8 @@ def _estimate_size(info: dict, height=None, audio_only=False):
 def _run_download(opts: dict, url: str):
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        if not info:
+            raise yt_dlp.utils.DownloadError("no video formats: requested format is not available")
         filename = ydl.prepare_filename(info)
         if info.get("requested_downloads"):
             real = info["requested_downloads"][0].get("filepath")
@@ -138,10 +142,10 @@ def _download_sync(url: str, height, audio_only: bool, output: str):
     opts["merge_output_format"] = "mp4"
     if height:
         opts["format"] = (f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
-                           f"bestvideo[height<={height}]+bestaudio/best[height<={height}]")
+                           f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/bv*+ba/b")
     else:
         opts["format"] = ("bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
-                           "bestvideo[height<=1080]+bestaudio/best[height<=1080]")
+                           "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bv*+ba/b")
 
     try:
         return _run_download(opts, url)
@@ -179,6 +183,43 @@ def _download_gallery_sync(url: str, chat_id: int):
         return files
 
 
+def _probe_size(f):
+    size = f.get("filesize") or f.get("filesize_approx")
+    if size:
+        return size
+    url = f.get("url")
+    if not url or not str(f.get("protocol", "")).startswith("http"):
+        return None
+    headers = dict(f.get("http_headers") or {})
+    headers["Range"] = "bytes=0-0"
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            total = r.headers.get("Content-Range", "").rsplit("/", 1)[-1]
+            if total.isdigit():
+                return int(total)
+            cl = r.headers.get("Content-Length") or ""
+            return int(cl) if cl.isdigit() and int(cl) > 1024 else None
+    except Exception:
+        return None
+
+
+def _fit_height(url: str, height: int) -> int:
+    """Highest height <= requested whose video+audio fits MAX_UPLOAD_BYTES."""
+    formats = (_extract_info_sync(url) or {}).get("formats") or []
+    audio = [f for f in formats if f.get("acodec") != "none" and f.get("vcodec") == "none"]
+    audio.sort(key=lambda f: f.get("abr") or 0, reverse=True)
+    audio_size = (_probe_size(audio[0]) or 0) if audio else 0
+    heights = sorted({f["height"] for f in formats
+                      if f.get("vcodec") != "none" and f.get("height") and f["height"] <= height}, reverse=True)
+    for h in heights:
+        sizes = [x for x in (_probe_size(f) for f in formats
+                             if f.get("vcodec") != "none" and f.get("height") == h) if x]
+        if not sizes or max(sizes) + audio_size <= MAX_UPLOAD_BYTES:
+            return h
+    return heights[-1] if heights else height
+
+
 async def get_loop_run(func, *args):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(EXECUTOR, func, *args)
@@ -192,7 +233,7 @@ async def _send_downloaded(target, filename, title):
 
     if size > MAX_UPLOAD_BYTES:
         os.remove(filename)
-        await target.answer(f"⚠️ Fayl juda katta ({size // (1024*1024)}MB). Hozircha 50MB dan katta fayl yuborib bo'lmaydi.")
+        await target.answer(f"⚠️ Fayl juda katta ({size // (1024*1024)}MB). Telegram 2 GB dan katta faylni qabul qilmaydi.")
         return None
 
     file = FSInputFile(filename)
@@ -361,10 +402,14 @@ async def handle_link(message: Message, bot: Bot):
             async with DOWNLOAD_SEMAPHORE:
                 files = await get_loop_run(_download_gallery_sync, url, message.chat.id)
         except Exception:
+            if await _try_gallerydl(message, status, url):
+                return
             await status.edit_text("❌ Galereyani yuklab bo'lmadi")
             return
 
         if not files:
+            if await _try_gallerydl(message, status, url):
+                return
             await status.edit_text("❌ Fayllar topilmadi")
             return
 
@@ -426,6 +471,13 @@ async def handle_link(message: Message, bot: Bot):
             async with async_session() as session:
                 await crud.add_to_history(session, message.from_user.id, url, title, media_type)
         await status.delete()
+        if filename.lower().endswith((".mp4", ".mov", ".webm", ".mkv")):
+            try:
+                mp3_token = uuid.uuid4().hex[:10]
+                PENDING[mp3_token] = {"url": url, "chat_id": message.chat.id, "user_id": message.from_user.id}
+                await message.answer("🎵 Audio kerakmi?", reply_markup=mp3_kb(mp3_token))
+            except Exception as e:
+                print('[mp3 btn] error:', repr(e), flush=True)
     except Exception:
         import traceback; traceback.print_exc()
         await status.edit_text("❌ Yuklab bo'lmadi")
@@ -445,6 +497,14 @@ async def handle_quality_choice(callback: CallbackQuery):
 
     audio_only = choice == "audio"
     height = None if audio_only else int(choice)
+    if height:
+        try:
+            fit = await get_loop_run(_fit_height, url, height)
+            if fit and fit < height:
+                await callback.message.edit_text(f"⏳ {height}p 2 GB dan katta, {fit}p yuklanmoqda...")
+                height = fit
+        except Exception:
+            pass
     output = f"storage/temp/{data['chat_id']}_%(id)s.%(ext)s"
 
     try:
@@ -470,7 +530,7 @@ async def handle_quality_choice(callback: CallbackQuery):
             PENDING.pop(token, None)
             return
         try:
-            sent = await callback.message.answer_audio(FSInputFile(filename), caption=f"✅ {title}")
+            sent = await callback.message.answer_audio(FSInputFile(filename, filename=f"{title}.mp3"), title=title, performer=info.get("uploader") or "SaveX", caption=f"✅ {title}")
             try:
                 fav_token = register_favorite_item(sent.audio.file_id, "audio", title)
                 await sent.edit_reply_markup(reply_markup=favorite_button(fav_token))
