@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -81,3 +81,15 @@ class PriceSetting(Base):
     plan: Mapped[str] = mapped_column(String(20))
     months: Mapped[int] = mapped_column(Integer)
     price: Mapped[int] = mapped_column(Integer)
+
+
+class MediaCache(Base):
+    __tablename__ = "media_cache"
+    __table_args__ = (UniqueConstraint("cache_key", "variant"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cache_key: Mapped[str] = mapped_column(String(300), index=True)
+    variant: Mapped[str] = mapped_column(String(20))
+    file_id: Mapped[str] = mapped_column(String(300))
+    media_type: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -2,6 +2,9 @@ import asyncio
 import os
 import uuid
 import urllib.request
+import inspect
+import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from aiogram import Router, F, Bot
 from aiogram.types import Message, FSInputFile, CallbackQuery, InputMediaPhoto, InputMediaVideo
@@ -129,6 +132,10 @@ def _download_sync(url: str, height, audio_only: bool, output: str):
     avtomatik oddiy 'best' formatga o'tib, baribir yuklab beradi."""
     opts = _base_opts()
     opts["outtmpl"] = output
+    opts["postprocessor_args"] = {"merger": ["-movflags", "+faststart"]}
+    if "vk.com" in url or "vkvideo.ru" in url:
+        opts["external_downloader"] = {"http": "aria2c"}
+        opts["external_downloader_args"] = {"aria2c": ["-x16", "-s16", "-k1M", "--file-allocation=none"]}
 
     if audio_only:
         opts["format"] = "bestaudio/best"
@@ -220,12 +227,70 @@ def _fit_height(url: str, height: int) -> int:
     return heights[-1] if heights else height
 
 
+_THUMB_OK = "thumbnail" in inspect.signature(Message.answer_video).parameters
+
+
+def _video_meta(filename: str) -> dict:
+    """duration/width/height (+thumbnail) for answer_video."""
+    meta = {}
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height:format=duration", "-of", "json", filename],
+            capture_output=True, timeout=20).stdout
+        d = json.loads(out or b"{}")
+        st = (d.get("streams") or [{}])[0]
+        if st.get("width") and st.get("height"):
+            meta["width"], meta["height"] = int(st["width"]), int(st["height"])
+        dur = (d.get("format") or {}).get("duration")
+        if dur:
+            meta["duration"] = int(float(dur))
+        if _THUMB_OK:
+            thumb = filename + ".thumb.jpg"
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-ss", "1", "-i", filename, "-frames:v", "1",
+                 "-vf", "scale=320:320:force_original_aspect_ratio=decrease", "-q:v", "5", thumb],
+                capture_output=True, timeout=30)
+            if os.path.exists(thumb) and os.path.getsize(thumb) < 200 * 1024:
+                meta["thumbnail"] = FSInputFile(thumb)
+    except Exception as e:
+        print("[video meta]", repr(e), flush=True)
+    return meta
+
+
+async def _send_cached(target, cache_key, variant, url, user_id):
+    """Resend a previously uploaded file by file_id. Returns media_type or None."""
+    try:
+        async with async_session() as session:
+            row = await crud.get_cached_media(session, cache_key, variant)
+        if not row:
+            return None
+        title = row.title or "Media"
+        if row.media_type == "photo":
+            sent = await target.answer_photo(row.file_id, caption=f"✅ {title}")
+        elif row.media_type == "audio":
+            sent = await target.answer_audio(row.file_id, caption=f"✅ {title}")
+        else:
+            sent = await target.answer_video(row.file_id, caption=f"✅ {title}", supports_streaming=True)
+        try:
+            fav_token = register_favorite_item(row.file_id, row.media_type, title)
+            await sent.edit_reply_markup(reply_markup=favorite_button(fav_token))
+        except Exception:
+            pass
+        async with async_session() as session:
+            await crud.add_to_history(session, user_id, url, title, row.media_type)
+        return row.media_type
+    except Exception as e:
+        print("[cache send]", repr(e), flush=True)
+        return None
+
+
 async def get_loop_run(func, *args):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(EXECUTOR, func, *args)
 
 
-async def _send_downloaded(target, filename, title):
+async def _send_downloaded(target, filename, title, cache=None):
     """Fayl kengaytmasiga qarab rasm yoki video sifatida yuboradi, hajmni tekshiradi,
     sevimlilar tugmasini qo'shadi. Yuborilgan media turini qaytaradi."""
     ext = os.path.splitext(filename)[1].lower()
@@ -242,11 +307,19 @@ async def _send_downloaded(target, filename, title):
         media_type = "photo"
         fid = sent.photo[-1].file_id
     else:
-        sent = await target.answer_video(file, caption=f"✅ {title}")
+        sent = await target.answer_video(file, caption=f"✅ {title}", supports_streaming=True, **(await get_loop_run(_video_meta, filename)))
         media_type = "video"
         fid = sent.video.file_id
 
     os.remove(filename)
+    if os.path.exists(filename + ".thumb.jpg"):
+        os.remove(filename + ".thumb.jpg")
+    if cache:
+        try:
+            async with async_session() as session:
+                await crud.save_cached_media(session, cache[0], cache[1], fid, media_type, title)
+        except Exception as e:
+            print("[cache save]", repr(e), flush=True)
     try:
         fav_token = register_favorite_item(fid, media_type, title)
         await sent.edit_reply_markup(reply_markup=favorite_button(fav_token))
@@ -436,6 +509,7 @@ async def handle_link(message: Message, bot: Bot):
         return
 
     duration = info.get("duration") or 0
+    ckey = (info.get("extractor_key") or "") + ":" + str(info.get("id")) if info.get("id") else None
 
     # Uzun video (>3 daqiqa) — sifat tanlash tugmalari
     if duration > SHORT_VIDEO_SECONDS:
@@ -450,7 +524,7 @@ async def handle_link(message: Message, bot: Bot):
             heights = {360, 480}
 
         token = uuid.uuid4().hex[:10]
-        PENDING[token] = {"url": url, "chat_id": message.chat.id, "user_id": message.from_user.id}
+        PENDING[token] = {"url": url, "chat_id": message.chat.id, "user_id": message.from_user.id, "ckey": ckey}
 
         await status.edit_text(
             f"🎬 <b>{(info.get('title') or 'Video')[:60]}</b>\n\n⬇️ Sifatni tanlang:",
@@ -460,13 +534,22 @@ async def handle_link(message: Message, bot: Bot):
         return
 
     # Qisqa video YOKI rasm — avtomatik yuklab, turini aniqlab yuboradi
+    if ckey:
+        hit = await _send_cached(message, ckey, "auto", url, message.from_user.id)
+        if hit:
+            await status.delete()
+            if hit == "video":
+                mp3_token = uuid.uuid4().hex[:10]
+                PENDING[mp3_token] = {"url": url, "chat_id": message.chat.id, "user_id": message.from_user.id, "ckey": ckey}
+                await message.answer("🎵 Audio kerakmi?", reply_markup=mp3_kb(mp3_token))
+            return
     await status.edit_text("⏳ Yuklab olinmoqda...")
     try:
         async with DOWNLOAD_SEMAPHORE:
             info2, filename = await get_loop_run(
                 _download_sync, url, None, False, f"storage/temp/{message.chat.id}_%(id)s.%(ext)s")
         title = (info2.get("title") or "Media")[:50]
-        media_type = await _send_downloaded(message, filename, title)
+        media_type = await _send_downloaded(message, filename, title, cache=(ckey, "auto") if ckey else None)
         if media_type:
             async with async_session() as session:
                 await crud.add_to_history(session, message.from_user.id, url, title, media_type)
@@ -474,7 +557,7 @@ async def handle_link(message: Message, bot: Bot):
         if filename.lower().endswith((".mp4", ".mov", ".webm", ".mkv")):
             try:
                 mp3_token = uuid.uuid4().hex[:10]
-                PENDING[mp3_token] = {"url": url, "chat_id": message.chat.id, "user_id": message.from_user.id}
+                PENDING[mp3_token] = {"url": url, "chat_id": message.chat.id, "user_id": message.from_user.id, "ckey": ckey}
                 await message.answer("🎵 Audio kerakmi?", reply_markup=mp3_kb(mp3_token))
             except Exception as e:
                 print('[mp3 btn] error:', repr(e), flush=True)
@@ -492,6 +575,16 @@ async def handle_quality_choice(callback: CallbackQuery):
         return
 
     url = data["url"]
+    if data.get("ckey"):
+        hit = await _send_cached(callback.message, data["ckey"], choice, url, data["user_id"])
+        if hit:
+            PENDING.pop(token, None)
+            await callback.answer()
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            return
     await callback.message.edit_text("⏳ Yuklab olinmoqda...")
     await callback.answer()
 
@@ -531,6 +624,12 @@ async def handle_quality_choice(callback: CallbackQuery):
             return
         try:
             sent = await callback.message.answer_audio(FSInputFile(filename, filename=f"{title}.mp3"), title=title, performer=info.get("uploader") or "SaveX", caption=f"✅ {title}")
+            if data.get("ckey"):
+                try:
+                    async with async_session() as session:
+                        await crud.save_cached_media(session, data["ckey"], "audio", sent.audio.file_id, "audio", title)
+                except Exception as e:
+                    print("[cache save]", repr(e), flush=True)
             try:
                 fav_token = register_favorite_item(sent.audio.file_id, "audio", title)
                 await sent.edit_reply_markup(reply_markup=favorite_button(fav_token))
@@ -545,7 +644,7 @@ async def handle_quality_choice(callback: CallbackQuery):
         PENDING.pop(token, None)
         return
 
-    media_type = await _send_downloaded(callback.message, filename, title)
+    media_type = await _send_downloaded(callback.message, filename, title, cache=(data["ckey"], choice) if data.get("ckey") else None)
     if media_type:
         async with async_session() as session:
             await crud.add_to_history(session, data["user_id"], url, title, media_type)

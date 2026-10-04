@@ -413,3 +413,23 @@ async def set_price(session: AsyncSession, plan: str, months: int, price: int):
     else:
         session.add(PriceSetting(plan=plan, months=months, price=price))
     await session.commit()
+
+
+from app.database.models import MediaCache
+
+
+async def get_cached_media(session: AsyncSession, cache_key: str, variant: str):
+    result = await session.execute(
+        select(MediaCache).where(MediaCache.cache_key == cache_key, MediaCache.variant == variant)
+    )
+    return result.scalar_one_or_none()
+
+
+async def save_cached_media(session: AsyncSession, cache_key: str, variant: str, file_id: str, media_type: str, title: str):
+    if await get_cached_media(session, cache_key, variant):
+        return
+    session.add(MediaCache(cache_key=cache_key, variant=variant, file_id=file_id, media_type=media_type, title=title))
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
