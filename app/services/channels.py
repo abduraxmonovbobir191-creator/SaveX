@@ -1,9 +1,13 @@
+import logging
 from datetime import datetime
+from html import escape
 from aiogram import Bot
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.database.session import async_session
 from app.database import crud
 from config import ADMIN_IDS
+
+log = logging.getLogger(__name__)
 
 
 def _target_reached_kb(channel_id: int):
@@ -31,8 +35,11 @@ async def get_missing_channels(bot: Bot, user_telegram_id: int):
         try:
             member = await bot.get_chat_member(ch.chat_id, user_telegram_id)
             joined = member.status in ("member", "administrator", "creator")
-        except Exception:
-            joined = False
+        except Exception as e:
+            # Bot removed from the channel / channel deleted: we can't verify anyone, so don't
+            # lock every user out because of it. Skip the channel and log it for the admins.
+            log.warning("[channels] get_chat_member failed for %s (%s): %r", ch.chat_id, ch.title, e)
+            continue
 
         if joined:
             newly_joined.append(ch)
@@ -53,7 +60,7 @@ async def get_missing_channels(bot: Bot, user_telegram_id: int):
                                 await bot.send_message(
                                     admin_id,
                                     f"🎯 <b>Maqsadga yetildi!</b>\n\n"
-                                    f"Kanal: {ch_fresh.title}\n"
+                                    f"Kanal: {escape(ch_fresh.title)}\n"
                                     f"Maqsad: {ch_fresh.target_count} ta yangi a'zo\n"
                                     f"Hozirgi (bot orqali): {ch_fresh.joined_count} ta\n\n"
                                     f"Bu kanalni majburiy ro'yxatdan olib tashlaymi?",

@@ -1,7 +1,8 @@
+from html import escape
 from aiogram import Router, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, MessageOriginChannel
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.database.session import async_session
 from app.database import crud
@@ -14,6 +15,18 @@ class ChannelStates(StatesGroup):
     waiting_target = State()
 
 def is_admin(uid): return uid in ADMIN_IDS
+
+
+def forwarded_channel(message: Message):
+    """Channel a message was forwarded from. Bot API 7.0+ sends `forward_origin`;
+    `forward_from_chat` is only a legacy fallback."""
+    origin = message.forward_origin
+    if isinstance(origin, MessageOriginChannel):
+        return origin.chat
+    chat = getattr(message, "forward_from_chat", None)
+    if chat is not None and chat.type == "channel":
+        return chat
+    return None
 
 def channels_admin_kb(channels):
     kb = InlineKeyboardBuilder()
@@ -51,11 +64,11 @@ async def ch_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(ChannelStates.waiting_forward, F.forward_from_chat)
+@router.message(ChannelStates.waiting_forward, lambda m: forwarded_channel(m) is not None)
 async def ch_add_received(message: Message, state: FSMContext, bot: Bot):
     if not is_admin(message.from_user.id):
         return
-    chat = message.forward_from_chat
+    chat = forwarded_channel(message)
     try:
         invite_link = await bot.export_chat_invite_link(chat.id)
     except Exception:
@@ -106,7 +119,7 @@ async def ch_view(callback: CallbackQuery):
         return
 
     target_str = str(channel.target_count) if channel.target_count else "cheksiz"
-    text = (f"📡 <b>{channel.title}</b>\n\nHavola: {channel.invite_link}\n"
+    text = (f"📡 <b>{escape(channel.title)}</b>\n\nHavola: {escape(channel.invite_link)}\n"
             f"Maqsad: {target_str}\nHozirgi (bot orqali qo'shilgan): {channel.joined_count}")
     kb = InlineKeyboardBuilder()
     kb.button(text="🗑 O'chirish (majburiylikdan)", callback_data=f"ch:remove:{channel.id}")

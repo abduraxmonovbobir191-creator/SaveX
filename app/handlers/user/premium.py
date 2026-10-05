@@ -1,3 +1,4 @@
+from html import escape
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from app.database.session import async_session
@@ -10,7 +11,7 @@ CARD = "5614 6821 1327 2423"
 AWAITING_RECEIPT: dict[int, int] = {}
 
 def fmt_username(username: str | None) -> str:
-    return f"@{username}" if username else "username yo'q"
+    return f"@{escape(username)}" if username else "username yo'q"
 
 
 @router.message(F.text == "💎 Premium")
@@ -31,7 +32,10 @@ async def show_plan(callback: CallbackQuery):
     plan = callback.data.split(":")[1]
     if plan == "back":
         return
-    info = PLANS[plan]
+    info = PLANS.get(plan)
+    if not info:
+        await callback.answer()
+        return
     async with async_session() as session:
         prices = await crud.get_plan_prices(session, plan)
     text = f"{info['title']}\n\n" + "\n".join(f"• {f}" for f in info["features"]) + "\n\n⬇️ Muddatni tanlang:"
@@ -41,10 +45,21 @@ async def show_plan(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("buy:"))
 async def buy_handler(callback: CallbackQuery):
-    _, plan, months, price = callback.data.split(":")
-    months, price = int(months), int(price)
+    # callback_data faqat "buy:<plan>:<months>" — narx hech qachon undan olinmaydi
+    # (eski "buy:plan:months:price" tugmalari ham ishlaydi, lekin 4-qism e'tiborga olinmaydi).
+    parts = callback.data.split(":")
+    try:
+        plan, months = parts[1], int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer()
+        return
 
     async with async_session() as session:
+        prices = await crud.get_plan_prices(session, plan) if plan in PLANS else {}
+        price = prices.get(months)
+        if price is None:
+            await callback.answer("Bu tarif mavjud emas, qaytadan tanlang", show_alert=True)
+            return
         user = await crud.get_or_create_user(session, callback.from_user.id, callback.from_user.username,
                                               callback.from_user.first_name, callback.from_user.last_name)
         order = await crud.create_order(session, user.telegram_id, plan, months, price)
@@ -74,7 +89,7 @@ async def handle_receipt(message: Message, bot: Bot):
 
     plan_name = "PLUS" if order.plan == "plus" else "PRO"
     caption = (f"🆕 <b>Yangi to'lov cheki — Buyurtma #{order.id}</b>\n\n"
-               f"Foydalanuvchi: {message.from_user.full_name} ({fmt_username(message.from_user.username)})\n"
+               f"Foydalanuvchi: {escape(message.from_user.full_name)} ({fmt_username(message.from_user.username)})\n"
                f"ID: <code>{message.from_user.id}</code>\nTarif: {plan_name}\n"
                f"Muddat: {order.months} oy\nSumma: {order.price:,} so'm").replace(",", ".")
 

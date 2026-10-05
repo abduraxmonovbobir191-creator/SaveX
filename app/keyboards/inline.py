@@ -23,7 +23,7 @@ def durations_kb(plan: str, prices: dict) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for months, price in prices.items():
         text = f"{months} oy — {price:,} so'm".replace(",", ".")
-        kb.button(text=text, callback_data=f"buy:{plan}:{months}:{price}")
+        kb.button(text=text, callback_data=f"buy:{plan}:{months}")
     kb.button(text="⬅️ Ortga", callback_data="plan:back")
     kb.adjust(1)
     return kb.as_markup()

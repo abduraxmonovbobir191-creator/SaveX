@@ -3,6 +3,7 @@ import csv
 import io
 import os
 from datetime import datetime
+from html import escape
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -150,7 +151,7 @@ async def adm_topusers(callback: CallbackQuery):
         medals = ["🥇", "🥈", "🥉"]
         for i, (name, uid, cnt) in enumerate(top, 1):
             medal = medals[i - 1] if i <= 3 else f"{i}."
-            lines.append(f"{medal} {name} (ID: {uid}) — {cnt} ta yuklash")
+            lines.append(f"{medal} {escape(str(name))} (ID: {uid}) — {cnt} ta yuklash")
         text = "\n".join(lines)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb.as_markup())
     await callback.answer()
@@ -223,12 +224,15 @@ async def adm_export(callback: CallbackQuery):
     for o in orders:
         writer.writerow([o.id, o.user_id, o.plan, o.months, o.price, o.status, o.created_at])
 
+    os.makedirs("storage/temp", exist_ok=True)
     path = f"storage/temp/orders_export_{callback.from_user.id}.csv"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(buf.getvalue())
-
-    await callback.message.answer_document(FSInputFile(path), caption="📄 Buyurtmalar tarixi (CSV)")
-    os.remove(path)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(buf.getvalue())
+        await callback.message.answer_document(FSInputFile(path), caption="📄 Buyurtmalar tarixi (CSV)")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
     await callback.answer()
 
 
@@ -251,16 +255,16 @@ async def _send_user_card(message: Message, user):
     if user.is_premium and user.premium_until and user.premium_until > datetime.utcnow():
         status = f"{user.premium_type.upper()} (tugash: {crud.to_tashkent_str(user.premium_until)})"
     ban_status = "🚫 Ban qilingan" if user.is_banned else "✅ Faol"
-    username_line = f"@{user.username}" if user.username else "username yo'q"
-    phone_line = user.phone or "kiritilmagan"
+    username_line = f"@{escape(user.username)}" if user.username else "username yo'q"
+    phone_line = escape(user.phone or "kiritilmagan")
 
     text = (f"👤 <b>Foydalanuvchi</b>\n\n"
-            f"Ism: {user.first_name} {user.last_name or ''}\n"
+            f"Ism: {escape(user.first_name or '')} {escape(user.last_name or '')}\n"
             f"Username: {username_line}\n"
             f"Telefon: <code>{phone_line}</code>\n"
             f"ID: <code>{user.telegram_id}</code>\n"
             f"Holat: {ban_status}\nStatus: {status}\n"
-            f"Kunlik yuklash: {user.daily_downloads}\nViloyat: {user.region or '-'}\n"
+            f"Kunlik yuklash: {user.daily_downloads}\nViloyat: {escape(user.region or '-')}\n"
             f"Ro'yxatdan o'tgan: {crud.to_tashkent_str(user.created_at)}")
 
     kb_markup = user_action_kb(user.telegram_id, user.is_banned, user.is_premium)

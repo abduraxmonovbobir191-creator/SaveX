@@ -1,0 +1,15 @@
+{
+  "err_private": "🔒 Bu kontent yopiq (private). Faqat ochiq havolalarni yuklab olish mumkin.",
+  "err_login": "🔑 Bu havolani ochish uchun akkauntga kirish (cookies) talab qilinadi. Hozircha bu havolani yuklab bo'lmaydi.",
+  "err_unsupported": "❌ Bu platforma yoki havola turi qo'llab-quvvatlanmaydi.",
+  "err_too_large": "⚠️ Fayl juda katta (Telegram 2 GB dan katta faylni qabul qilmaydi). Pastroq sifatni tanlab ko'ring.",
+  "err_no_media": "❌ Bu postda video yoki rasm topilmadi (faqat matn bo'lishi mumkin).",
+  "err_unavailable": "❌ Kontent topilmadi yoki o'chirib tashlangan.",
+  "err_generic": "❌ Yuklab bo'lmadi. Havolani tekshirib, birozdan keyin qayta urinib ko'ring.",
+  "err_generic_quality": "❌ Yuklab bo'lmadi, boshqa sifat tanlab ko'ring.",
+  "lib_videos_title": "🎬 <b>Videolarim</b> (oxirgi {count} ta)",
+  "lib_audio_title": "🎵 <b>Musiqalarim</b> (oxirgi {count} ta)",
+  "lib_videos_empty": "🎬 <b>Videolarim</b>\n\nHali hech qanday video yuklamagansiz.",
+  "lib_audio_empty": "🎵 <b>Musiqalarim</b>\n\nHali hech qanday musiqa yuklamagansiz.",
+  "lib_hint": "ℹ️ Qayta yuklash uchun havolani botga yuboring."
+}

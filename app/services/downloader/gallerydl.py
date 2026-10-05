@@ -18,8 +18,12 @@ def _cookies_ok():
         return False
 
 
-def download_sync(url: str, chat_id: int):
-    dest = f"storage/temp/gdl_{chat_id}_{uuid.uuid4().hex[:8]}"
+def download_sync(url: str, chat_id: int, dest: str | None = None):
+    """Download up to 10 media files. With `dest` the caller owns (and deletes) the folder;
+    without it a private temp folder is created and removed again when nothing was found."""
+    own_dest = dest is None
+    if own_dest:
+        dest = f"storage/temp/gdl_{chat_id}_{uuid.uuid4().hex[:8]}"
     os.makedirs(dest, exist_ok=True)
 
     cmd = [sys.executable, "-m", "gallery_dl", "-q", "-D", dest,
@@ -39,6 +43,6 @@ def download_sync(url: str, chat_id: int):
         f for f in glob.glob(os.path.join(dest, "*"))
         if os.path.isfile(f) and f.lower().endswith(MEDIA_EXT)
     ]
-    if not files:
+    if not files and own_dest:
         shutil.rmtree(dest, ignore_errors=True)
     return sorted(files, key=os.path.getmtime)

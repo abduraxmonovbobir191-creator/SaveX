@@ -1,3 +1,4 @@
+from html import escape
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
@@ -15,7 +16,7 @@ REPLY_MAP: dict[tuple[int, int], int] = {}
 
 
 def fmt_username(username: str | None) -> str:
-    return f"@{username}" if username else "username yo'q"
+    return f"@{escape(username)}" if username else "username yo'q"
 
 
 @router.callback_query(F.data == "feedback:start")
@@ -29,14 +30,14 @@ async def start_feedback(callback: CallbackQuery, state: FSMContext):
 async def relay_feedback(message: Message, state: FSMContext, bot: Bot):
     async with async_session() as session:
         db_user = await crud.get_user(session, message.from_user.id)
-    phone = db_user.phone if db_user and db_user.phone else "kiritilmagan"
+    phone = escape(db_user.phone) if db_user and db_user.phone else "kiritilmagan"
 
     caption = (f"📩 <b>Yangi xabar</b>\n\n"
-               f"Foydalanuvchi: {message.from_user.full_name}\n"
+               f"Foydalanuvchi: {escape(message.from_user.full_name)}\n"
                f"Username: {fmt_username(message.from_user.username)}\n"
                f"Telefon: <code>{phone}</code>\n"
                f"ID: <code>{message.from_user.id}</code>\n\n"
-               f"💬 {message.text}\n\n"
+               f"💬 {escape(message.text or message.caption or '—')}\n\n"
                f"↩️ <i>Javob berish uchun shu xabarga reply qiling</i>")
 
     photo_id = None
@@ -69,7 +70,7 @@ async def admin_reply(message: Message, bot: Bot):
         return
 
     try:
-        await bot.send_message(target_user_id, f"💬 <b>Admin javobi:</b>\n\n{message.text}", parse_mode="HTML")
+        await bot.send_message(target_user_id, f"💬 <b>Admin javobi:</b>\n\n{escape(message.text or message.caption or '—')}", parse_mode="HTML")
         await message.reply("✅ Foydalanuvchiga yetkazildi.")
     except Exception:
         await message.reply("❌ Yuborib bo'lmadi (foydalanuvchi botni bloklagan bo'lishi mumkin).")

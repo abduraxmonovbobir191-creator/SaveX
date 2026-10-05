@@ -1,0 +1,15 @@
+{
+  "err_private": "🔒 This content is private. Only public links can be downloaded.",
+  "err_login": "🔑 This link requires an account login (cookies). It can't be downloaded right now.",
+  "err_unsupported": "❌ This platform or link type is not supported.",
+  "err_too_large": "⚠️ The file is too large (Telegram does not accept files over 2 GB). Try a lower quality.",
+  "err_no_media": "❌ No video or photo was found in this post (it may be text only).",
+  "err_unavailable": "❌ The content was not found or has been removed.",
+  "err_generic": "❌ Download failed. Check the link and try again later.",
+  "err_generic_quality": "❌ Download failed, try another quality.",
+  "lib_videos_title": "🎬 <b>My videos</b> (last {count})",
+  "lib_audio_title": "🎵 <b>My music</b> (last {count})",
+  "lib_videos_empty": "🎬 <b>My videos</b>\n\nYou haven't downloaded any videos yet.",
+  "lib_audio_empty": "🎵 <b>My music</b>\n\nYou haven't downloaded any music yet.",
+  "lib_hint": "ℹ️ To download again, send the link to the bot."
+}
