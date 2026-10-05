@@ -20,6 +20,7 @@ from app.keyboards.channels import channels_gate_kb
 from app.services.channels import get_missing_channels
 from app.handlers.user.favorites import register_favorite_item, favorite_button
 from app.services.downloader.router import detect_platform, get_downloader
+from app.services import cookies
 from app.services.downloader.errors import TooLargeError, classify_error
 from app.services.i18n import t, get_user_lang
 from config import TEMP_DIR
@@ -29,12 +30,12 @@ log = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 1950 * 1024 * 1024
 SHORT_VIDEO_SECONDS = 180
-MAX_GALLERY_ITEMS = 10
+MAX_GALLERY_ITEMS = 10      # one Telegram album
+MAX_INSTAGRAM_ITEMS = 20    # Instagram carousel limit; sent as several albums of 10
 PHOTO_EXT = (".jpg", ".jpeg", ".png", ".webp")
 EXECUTOR = ThreadPoolExecutor(max_workers=8)
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(5)
 PENDING = {}
-COOKIES_PATH = "storage/cookies.txt"
 
 NO_VIDEO_SIGNALS = ["no video", "no video formats", "requested format is not available"]
 
@@ -58,19 +59,27 @@ def _cleanup(path: str):
     shutil.rmtree(path, ignore_errors=True)
 
 
-def _base_opts(playlist: bool = False):
+def _base_opts(playlist: bool = False, url: str | None = None, workdir: str | None = None):
+    """`url` + `workdir` enable login cookies (cookies/<platform>.txt): yt-dlp gets a private
+    copy inside `workdir`, so the real file is never written to or shared between jobs."""
+    items = MAX_INSTAGRAM_ITEMS if url and cookies.platform_of(url) == "instagram" else MAX_GALLERY_ITEMS
     opts = {"quiet": True, "no_warnings": True, "noplaylist": not playlist,
-            "socket_timeout": 25, "retries": 2, "playlistend": MAX_GALLERY_ITEMS}
-    if os.path.exists(COOKIES_PATH):
-        opts["cookiefile"] = COOKIES_PATH
+            "socket_timeout": 25, "retries": 2, "playlistend": items}
+    if url and workdir:
+        cookiefile = cookies.copy_for_ytdlp(url, workdir)
+        if cookiefile:
+            opts["cookiefile"] = cookiefile
     opts["max_filesize"] = MAX_UPLOAD_BYTES
     return opts
 
 
 def _extract_info_sync(url: str, playlist: bool = False):
-    opts = _base_opts(playlist)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
+    workdir = _new_job_dir()
+    try:
+        with yt_dlp.YoutubeDL(_base_opts(playlist, url, workdir)) as ydl:
+            return ydl.extract_info(url, download=False)
+    finally:
+        _cleanup(workdir)
 
 
 def _estimate_size(info: dict, height=None, audio_only=False):
@@ -166,7 +175,8 @@ def _ensure_file(info: dict, filename: str):
 def _download_sync(url: str, height, audio_only: bool, output: str):
     """Video/rasmni yuklaydi. Agar 'video' deb hisoblangan post aslida rasm bo'lsa,
     avtomatik oddiy 'best' formatga o'tib, baribir yuklab beradi."""
-    opts = _base_opts()
+    workdir = os.path.dirname(output)
+    opts = _base_opts(url=url, workdir=workdir)
     opts["outtmpl"] = output
     opts["postprocessor_args"] = {"merger": ["-movflags", "+faststart"]}
     if "vk.com" in url or "vkvideo.ru" in url:
@@ -197,7 +207,7 @@ def _download_sync(url: str, height, audio_only: bool, output: str):
         if not any(s in msg for s in NO_VIDEO_SIGNALS):
             raise
         # Bu aslida rasm ekan — oddiy 'best' bilan qayta urinamiz
-        opts2 = _base_opts()
+        opts2 = _base_opts(url=url, workdir=workdir)
         opts2["outtmpl"] = output
         opts2["format"] = "bv*+ba/b"
         opts2["merge_output_format"] = "mp4"
@@ -205,7 +215,7 @@ def _download_sync(url: str, height, audio_only: bool, output: str):
 
 
 def _download_gallery_sync(url: str, job_dir: str, playlist: bool = False):
-    opts = _base_opts(playlist)
+    opts = _base_opts(playlist, url, job_dir)
     opts["outtmpl"] = os.path.join(job_dir, "%(playlist_index)s_%(id)s.%(ext)s")
     opts["merge_output_format"] = "mp4"
 
@@ -363,26 +373,31 @@ async def _send_downloaded(target, filename, title, cache=None, lang="uz"):
 
 
 async def _send_group(message: Message, files: list[str]) -> bool:
-    """Rasm/video fayllarni (10 tagacha) albom yoki bitta media sifatida yuboradi."""
-    group = []
-    for f in files[:MAX_GALLERY_ITEMS]:
+    """Rasm/video fayllarni albomlarda yuboradi (har albom 10 tagacha, ko'p bo'lsa bo'lib
+    yuboriladi; bitta fayl alohida media sifatida). Hech narsa yuborilmasa False."""
+    media = []
+    for f in files[:MAX_INSTAGRAM_ITEMS]:
         if os.path.getsize(f) > MAX_UPLOAD_BYTES:
             continue
         if os.path.splitext(f)[1].lower() in PHOTO_EXT:
-            group.append(InputMediaPhoto(media=FSInputFile(f)))
+            media.append(InputMediaPhoto(media=FSInputFile(f)))
         else:
-            group.append(InputMediaVideo(media=FSInputFile(f)))
-    if not group:
+            media.append(InputMediaVideo(media=FSInputFile(f)))
+    if not media:
         return False
 
-    if len(group) == 1:
-        m = group[0]
-        if isinstance(m, InputMediaPhoto):
-            await message.answer_photo(m.media)
+    for start in range(0, len(media), MAX_GALLERY_ITEMS):
+        if start:
+            await asyncio.sleep(1)  # albomlar orasida flood-limitdan saqlanish
+        group = media[start:start + MAX_GALLERY_ITEMS]
+        if len(group) == 1:
+            m = group[0]
+            if isinstance(m, InputMediaPhoto):
+                await message.answer_photo(m.media)
+            else:
+                await message.answer_video(m.media)
         else:
-            await message.answer_video(m.media)
-    else:
-        await message.answer_media_group(group)
+            await message.answer_media_group(group)
     return True
 
 
@@ -423,8 +438,9 @@ async def handle_wikipedia(message: Message):
         await status.edit_text("❌ Maqola topilmadi yoki yuklab bo'lmadi")
 
 
-async def _try_gallerydl(message, status, url) -> bool:
-    # yt-dlp topa olmagan rasm/galereya havolalarini gallery-dl bilan urinib ko'radi
+async def _try_gallerydl(message, status, url) -> tuple[bool, str | None]:
+    """yt-dlp topa olmagan rasm/galereya havolalarini gallery-dl bilan urinib ko'radi.
+    (True, None) — yuborildi; (False, xato_kaliti) — bo'lmadi (kalit None: sabab noma'lum)."""
     from app.services.downloader.gallerydl import download_sync as gallerydl_sync
 
     job_dir = _new_job_dir()
@@ -433,20 +449,37 @@ async def _try_gallerydl(message, status, url) -> bool:
         async with DOWNLOAD_SEMAPHORE:
             files = await get_loop_run(gallerydl_sync, url, message.chat.id, job_dir)
         if not files:
-            return False
+            return False, None
 
         if not await _send_group(message, files):
-            return False
+            return False, "err_too_large"
 
         async with async_session() as session:
             await crud.add_to_history(session, message.from_user.id, url, "Galereya", "gallery")
         await status.delete()
-        return True
+        return True, None
     except Exception as e:
-        log.warning("[gallerydl] %r", e)
-        return False
+        key = classify_error(e)
+        log.warning("[gallerydl] %s: %r", key, e)
+        return False, key
     finally:
         _cleanup(job_dir)
+
+
+def _gallerydl_failure_key(yt_key: str, gdl_key: str | None) -> str:
+    """gallery-dl's login/private reason is the real blocker; otherwise keep yt-dlp's."""
+    return gdl_key if gdl_key in ("err_login", "err_private") else yt_key
+
+
+async def _fail_text(bot: Bot, url: str, err_key: str, lang: str) -> str:
+    """Localized text for a failed job. A login error on a platform that uses cookies means the
+    bot's session is missing/expired: tell the user clearly and alert the admins (rate-limited)."""
+    if err_key == "err_login":
+        platform = cookies.platform_of(url)
+        if platform:
+            await cookies.alert_admins(bot, platform)
+            return t("err_cookies", lang, platform=cookies.PLATFORM_TITLES[platform])
+    return t(err_key, lang)
 
 
 @router.message(F.text.startswith("http"))
@@ -486,17 +519,21 @@ async def handle_link(message: Message, bot: Bot):
     except Exception as e:
         err_key = classify_error(e)
         log.info("[extract] %s: %r", err_key, e)
-        # Login/private xatolarida gallery-dl ham yordam bermaydi (bir xil cookies)
+        # Login/private xatolarida gallery-dl ham yordam bermaydi (bir xil cookies).
+        # Boshqa xatolarda (masalan Instagram "no video in this post") darhol gallery-dl.
         if err_key not in ("err_login", "err_private"):
-            if await _try_gallerydl(message, status, url):
+            ok, gdl_key = await _try_gallerydl(message, status, url)
+            if ok:
                 return
-        await status.edit_text(t(err_key, lang))
+            err_key = _gallerydl_failure_key(err_key, gdl_key)
+        await status.edit_text(await _fail_text(bot, url, err_key, lang))
         return
 
     if not info:
-        if await _try_gallerydl(message, status, url):
+        ok, gdl_key = await _try_gallerydl(message, status, url)
+        if ok:
             return
-        await status.edit_text(t("err_no_media", lang))
+        await status.edit_text(await _fail_text(bot, url, _gallerydl_failure_key("err_no_media", gdl_key), lang))
         return
 
     is_gallery = info.get("_type") == "playlist" or (info.get("entries") and len(info.get("entries", [])) > 1)
@@ -510,15 +547,19 @@ async def handle_link(message: Message, bot: Bot):
             except Exception as e:
                 err_key = classify_error(e)
                 log.info("[gallery] %s: %r", err_key, e)
-                if err_key not in ("err_login", "err_private") and await _try_gallerydl(message, status, url):
-                    return
-                await status.edit_text(t(err_key, lang))
+                if err_key not in ("err_login", "err_private"):
+                    ok, gdl_key = await _try_gallerydl(message, status, url)
+                    if ok:
+                        return
+                    err_key = _gallerydl_failure_key(err_key, gdl_key)
+                await status.edit_text(await _fail_text(bot, url, err_key, lang))
                 return
 
             if not files:
-                if await _try_gallerydl(message, status, url):
+                ok, gdl_key = await _try_gallerydl(message, status, url)
+                if ok:
                     return
-                await status.edit_text(t("err_no_media", lang))
+                await status.edit_text(await _fail_text(bot, url, _gallerydl_failure_key("err_no_media", gdl_key), lang))
                 return
 
             try:
@@ -596,7 +637,7 @@ async def handle_link(message: Message, bot: Bot):
         err_key = classify_error(e)
         log.warning("[download] %s: %r", err_key, e, exc_info=err_key == "err_generic")
         try:
-            await status.edit_text(t(err_key, lang))
+            await status.edit_text(await _fail_text(bot, url, err_key, lang))
         except Exception:
             pass
     finally:
@@ -646,7 +687,11 @@ async def handle_quality_choice(callback: CallbackQuery):
         except Exception as e:
             err_key = classify_error(e)
             log.warning("[download] %s: %r", err_key, e, exc_info=err_key == "err_generic")
-            await callback.message.edit_text(t("err_generic_quality" if err_key == "err_generic" else err_key, lang))
+            if err_key == "err_generic":
+                text = t("err_generic_quality", lang)
+            else:
+                text = await _fail_text(callback.bot, url, err_key, lang)
+            await callback.message.edit_text(text)
             return
 
         title = (info.get("title") or "Media")[:50]

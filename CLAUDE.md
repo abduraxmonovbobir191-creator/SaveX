@@ -69,12 +69,14 @@ app/
                            phone.py, region.py, quality.py)
   services/
     channels.py            mandatory-channel membership check
+    cookies.py             cookies/<platform>.txt lookup for yt-dlp + gallery-dl, admin alert
     i18n.py                t(key, lang, **kw) + get_user_lang (reads locales/*.json)
     scheduler.py           premium expiry loop
     downloader/            errors.py (yt-dlp error → locale key) and gallerydl.py are used; router/common/generic/instagram/* are
                            NOT wired in yet (download.py has its own copies);
                            several files are empty placeholders
-storage/                   runtime data (gitignored): savex.db, temp/, cookies.txt
+cookies/                   login cookies per platform (gitignored, server-only)
+storage/                   runtime data (gitignored): savex.db, temp/, legacy cookies.txt
 ```
 
 ## Environment variables (names only — never commit values)
@@ -84,6 +86,7 @@ storage/                   runtime data (gitignored): savex.db, temp/, cookies.t
 | `BOT_TOKEN` | config.py | required |
 | `ADMIN_IDS` | config.py | comma-separated Telegram IDs |
 | `DATABASE_URL` | config.py | default `sqlite+aiosqlite:///./storage/savex.db` |
+| `INSTAGRAM_COOKIES`, `YOUTUBE_COOKIES`, `TIKTOK_COOKIES`, `TWITTER_COOKIES`, `PINTEREST_COOKIES` | services/cookies.py | optional path override; default `<project>/cookies/<platform>.txt` (`/opt/bots/SaveX/cookies/instagram.txt`) |
 | `API_ID`, `API_HASH` | create_session.py | only for the Pyrogram helper; also needed by the local `telegram-bot-api` server |
 
 Files with secrets (gitignored): `.env`, `storage/cookies.txt`, `cookies/`, `*.session`.
@@ -102,7 +105,10 @@ Files with secrets (gitignored): `.env`, `storage/cookies.txt`, `cookies/`, `*.s
   message text). Prices are never read from `callback_data`; read them from the DB.
 - Download jobs use a private temp dir (`_new_job_dir()`) and delete it in `finally`.
 - Every downloaded/temp file must be deleted after sending or on error (try/finally).
-- Never log or commit secrets. `cookies/` and `.env` are gitignored.
+- Never log or commit secrets. `cookies/` and `.env` are gitignored. Never log cookie
+  contents (only the first line is read, to check the format). `deploy.sh` never touches `cookies/`.
+- Cookies: `app/services/cookies.py` is the only place that resolves cookie files. yt-dlp gets a
+  private per-job copy (it writes the jar back on exit), gallery-dl reads the original.
 - Don't ask questions unless truly blocked; make sensible decisions and record them in
   PROGRESS.md.
 - At the end of each phase: update PROGRESS.md and roadmap status, commit with a clear
@@ -113,7 +119,7 @@ Files with secrets (gitignored): `.env`, `storage/cookies.txt`, `cookies/`, `*.s
 | # | Phase | Status |
 |---|---|---|
 | 0 | Audit: CLAUDE.md, PROGRESS.md, deploy.sh, DEPLOY.md | ✅ Done |
-| 1 | Bugs + UI (fix PROGRESS.md bug list, unify keyboards, start locales) | 🔄 1a ✅ HIGH/CRITICAL bugs · 1b ⏳ Medium/Low bugs + UI |
+| 1 | Bugs + UI (fix PROGRESS.md bug list, unify keyboards, start locales) | 🔄 1a ✅ HIGH/CRITICAL bugs · 1a-2 ✅ Instagram cookies · 1b ⏳ Medium/Low bugs + UI |
 | 2 | PostgreSQL + unified ID (Alembic migrations, one user key across tables) | ⬜ Todo |
 | 3 | Speed + parallel + cache (per-job temp dirs, timeouts, worker pool, file_id cache everywhere) | ⬜ Todo |
 | 4 | Platforms (wire `services/downloader/router.py`, per-platform modules) | ⬜ Todo |

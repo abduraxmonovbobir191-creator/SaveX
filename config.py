@@ -10,6 +10,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./storage/savex.db")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Login cookies (Netscape format), one file per platform: cookies/<platform>.txt.
+# Gitignored and never touched by deploy.sh. See app/services/cookies.py.
+COOKIES_DIR = os.path.join(BASE_DIR, "cookies")
+
 STORAGE_DIR = "storage"
 TEMP_DIR = os.path.join(STORAGE_DIR, "temp")
 STALE_TEMP_SECONDS = 3600
@@ -26,6 +31,7 @@ def ensure_runtime_dirs() -> None:
         pass
     for d in dirs:
         os.makedirs(d, exist_ok=True)
+    os.makedirs(COOKIES_DIR, mode=0o700, exist_ok=True)
 
 
 def cleanup_stale_temp() -> None:

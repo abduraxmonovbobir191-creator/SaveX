@@ -28,6 +28,47 @@ Also done (infra): `deploy.sh` / `DEPLOY.md` now use `/opt/bots/SaveX`, see Deci
 Not touched in 1a (Medium/Low, planned for 1b): #5, #11, #12, #14, #16-#33, #35, #36 and the
 second half of #15 (users who were already members are counted as "joined via bot").
 
+## Phase 1a-2 — Instagram login (cookies) (done)
+
+Cause of the server log (`There is no video in this post` from yt-dlp, then `HTTP redirect to
+login page` from gallery-dl): the Instagram image/carousel path had no login cookies. The only
+cookie support was `storage/cookies.txt`, passed to yt-dlp only (and to gallery-dl only when
+present), and its failure was shown as a generic "no media" message.
+
+Tested with code-level smoke tests (fake bot/message, mocked gallery-dl and yt-dlp errors, a
+local HTTP server for the real yt-dlp path). **Not run against live Instagram**: a real login
+session is needed on the server to confirm images/carousels end to end.
+
+- **One mechanism, `app/services/cookies.py`.** `cookies/<platform>.txt` for instagram,
+  youtube, tiktok, twitter, pinterest; env `<PLATFORM>_COOKIES` overrides the path
+  (`INSTAGRAM_COOKIES`, ...). Default dir is `<project>/cookies/`, i.e.
+  `/opt/bots/SaveX/cookies/instagram.txt` on the server. No platform file → legacy
+  `storage/cookies.txt` still works for every URL. A file without the Netscape header is ignored
+  with a warning (path only).
+- **yt-dlp and gallery-dl both use it.** gallery-dl gets `--cookies <file>` (read-only). yt-dlp
+  gets a private copy in the job dir (mode 600, deleted with it): yt-dlp saves the cookie jar back
+  on exit, so a shared file could be corrupted by parallel jobs. Side effect: yt-dlp's refreshed
+  cookies are not kept, the file is refreshed manually (see DEPLOY.md).
+- **Instagram "no video in this post"** goes straight to gallery-dl (yt-dlp errors other than
+  login/private always fall back to it). `gallerydl.download_sync` now raises `GalleryDlError`
+  (stderr tail, no cookie data) when it fails with no files, so the reason is known.
+  `classify_error` maps "HTTP redirect to login page", `login`, `checkpoint` to `err_login`.
+  If gallery-dl says login/private, that reason replaces yt-dlp's generic "no media".
+- **Missing/expired cookies.** On `err_login` for a cookie platform the user gets `err_cookies`
+  ("the bot's {platform} session (cookies) is missing or expired, admin notified", uz/ru/en) and
+  the admins get `⚠️ Instagram cookies expired` (or `cookies missing` when no file exists), at most
+  once per 10 minutes per platform (in memory, so it resets on restart). This also applies to
+  YouTube "sign in to confirm you're not a bot" and the other cookie platforms.
+- **Carousels.** gallery-dl fetches up to 20 files, yt-dlp up to 20 items for Instagram (10 for
+  everything else, e.g. YouTube playlists). `_send_group` sends albums of 10 and splits larger
+  sets (1 s pause between albums; a lone leftover file is sent as a single photo/video).
+- **Secrets.** Cookie files are only read to check the first line; contents are never logged
+  (the test asserts a sentinel value never reaches the logs). `deploy.sh` never touches `cookies/`
+  and refuses to deploy a revision that tracks files under it (`git fetch` + `merge --ff-only`
+  instead of `git pull`, same effect). `cookies/` is created at startup with mode 700.
+- **DEPLOY.md (Uzbek)** has a new "Cookies" section: files, adding the first time, refreshing,
+  manual check, security.
+
 ## Phase 0 — Audit (done)
 
 Audit was done by reading the code only. The bot was not run, so nothing below is

@@ -11,5 +11,8 @@
   "lib_audio_title": "🎵 <b>Моя музыка</b> (последние {count})",
   "lib_videos_empty": "🎬 <b>Мои видео</b>\n\nВы ещё не скачали ни одного видео.",
   "lib_audio_empty": "🎵 <b>Моя музыка</b>\n\nВы ещё не скачали ни одной песни.",
-  "lib_hint": "ℹ️ Чтобы скачать снова, отправьте ссылку боту."
+  "lib_hint": "ℹ️ Чтобы скачать снова, отправьте ссылку боту.",
+  "err_cookies": "🔑 {platform} сейчас не даёт скачать эту ссылку: сессия бота в {platform} (cookies) отсутствует или устарела. Администратор уведомлён, попробуйте позже.",
+  "admin_cookies_expired": "⚠️ {platform} cookies expired.\nОбновите файл: {file} (перезапуск не нужен). Инструкция: DEPLOY.md, раздел «Cookies».",
+  "admin_cookies_missing": "⚠️ {platform} cookies missing.\nДобавьте файл: {file} (перезапуск не нужен). Инструкция: DEPLOY.md, раздел «Cookies»."
 }

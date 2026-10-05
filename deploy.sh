@@ -6,6 +6,9 @@
 # touches SaveX: its own directory, its own systemd unit and its own compose project.
 # It never runs global commands (no `docker system prune`, no restarting docker,
 # no killing processes by name, no system-wide pip installs).
+#
+# cookies/ holds the login cookies (instagram.txt, ...). It is gitignored and this script
+# never reads, writes, moves, deletes or cleans it (no `git clean`, no copying over it).
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -36,6 +39,15 @@ compose() {
 
 has_compose_file() {
     [[ -f docker-compose.yml || -f docker-compose.yaml || -f compose.yml || -f compose.yaml ]]
+}
+
+# cookies/ is server-only. If a commit ever tracked files under cookies/, checking it out
+# could overwrite the live cookies, so refuse to deploy such a revision.
+refuse_if_tracks_cookies() {
+    if [[ -n "$(git ls-tree -r --name-only "$1" -- cookies/ 2>/dev/null)" ]]; then
+        echo "Refusing: revision $1 tracks files under cookies/ (they would overwrite the server's cookies)." >&2
+        exit 1
+    fi
 }
 
 # ig.json is a local, gitignored file. It used to be tracked, so the pull that stops
@@ -108,6 +120,7 @@ if [[ "${1:-}" == "rollback" ]]; then
     fi
     target="$(cat "$PREV_FILE")"
     echo "==> Rolling back to $target"
+    refuse_if_tracks_cookies "$target"
     protect_local_files
     git reset --hard "$target"
     restore_local_files
@@ -119,8 +132,10 @@ fi
 
 git rev-parse HEAD > "$PREV_FILE"
 echo "==> Pulling latest code (was $(git log -1 --oneline))"
+git fetch -q
+refuse_if_tracks_cookies '@{u}'
 protect_local_files
-git pull --ff-only
+git merge --ff-only -q '@{u}'
 restore_local_files
 install_deps
 migrate
