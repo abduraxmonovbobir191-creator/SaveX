@@ -9,3 +9,6 @@ storage/*.db
 
 storage/
 *.bak*
+
+cookies/
+.deploy_prev_commit
