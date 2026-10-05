@@ -10,9 +10,29 @@ Stack: Python 3.10+, aiogram 3.x, yt-dlp (+ gallery-dl fallback), SQLAlchemy 2 a
 The bot talks to a **local Telegram Bot API server** at `http://127.0.0.1:8081`
 (needed for uploads up to 2 GB).
 
+## Server
+
+SaveX runs at `/opt/bots/SaveX` on a **shared server** that also hosts other bots,
+websites and apps. Everything SaveX does on the server must stay inside its own scope:
+
+- Directory `/opt/bots/SaveX`; systemd unit `savex-bot`; docker compose project name `savex`
+  (all containers, networks and volumes prefixed `savex-`).
+- `deploy.sh` only `cd`s into its own dir and only manages the `savex-*` unit / `savex`
+  compose project. Never add global commands to it: no `docker system prune`, no
+  `systemctl restart docker`, no killing processes by name, no system-wide `pip install`.
+- **Later phases (Postgres/Redis):** the containers must be named `savex-postgres` and
+  `savex-redis`, must publish **no public ports** (reachable only on the internal `savex`
+  compose network; if host access is ever needed, bind to `127.0.0.1` only), and must not
+  clash with other projects (unique container, network and volume names prefixed `savex-`,
+  unique compose project name, no reuse of another project's database/Redis).
+- The local Bot API server port `8081` is hard-coded in `bot.py`; check it is free of other
+  projects before changing anything around it.
+
 ## How the bot starts
 
 `python bot.py`:
+0. `config.ensure_runtime_dirs()` creates `storage/`, `storage/temp/` and the SQLite DB folder;
+   `config.cleanup_stale_temp()` removes temp leftovers older than 1 hour.
 1. `Base.metadata.create_all` creates missing tables (no migrations yet — new columns
    on existing tables are NOT added automatically).
 2. Creates `Bot` with an `AiohttpSession` pointed at the local Bot API server.
@@ -27,7 +47,8 @@ session, currently unused by the bot).
 
 ```
 bot.py                     entry point
-config.py                  env loading (BOT_TOKEN, ADMIN_IDS, DATABASE_URL)
+config.py                  env loading (BOT_TOKEN, ADMIN_IDS, DATABASE_URL), runtime dirs
+locales/                   uz.json, ru.json, en.json (so far: download errors, history lists)
 app/
   database/
     models.py              User, Order, DownloadHistory, Favorite, MandatoryChannel,
@@ -48,8 +69,9 @@ app/
                            phone.py, region.py, quality.py)
   services/
     channels.py            mandatory-channel membership check
+    i18n.py                t(key, lang, **kw) + get_user_lang (reads locales/*.json)
     scheduler.py           premium expiry loop
-    downloader/            gallerydl.py is used; router/common/generic/instagram/* are
+    downloader/            errors.py (yt-dlp error → locale key) and gallerydl.py are used; router/common/generic/instagram/* are
                            NOT wired in yet (download.py has its own copies);
                            several files are empty placeholders
 storage/                   runtime data (gitignored): savex.db, temp/, cookies.txt
@@ -71,9 +93,14 @@ Files with secrets (gitignored): `.env`, `storage/cookies.txt`, `cookies/`, `*.s
 - Never remove or rename existing features, commands, handlers, callback_data, DB
   columns or admin functions. Only fix and extend.
 - Read only the files needed for the current phase. Do not re-read the whole repo.
-- All user-facing text goes through `locales/{uz,ru,en}.json`. All keyboards live in
-  one keyboards module. *(Target state — locales/ does not exist yet; introduced in
-  Phase 1 and completed in Phase 6.)*
+- All user-facing text goes through `locales/{uz,ru,en}.json` (`app.services.i18n.t`). All
+  keyboards live in one keyboards module. *(Target state — `locales/` exists since Phase 1a
+  and holds the download errors and the "Videolarim"/"Musiqalarim" lists; the remaining
+  hard-coded Uzbek text moves over gradually and is completed in Phase 6. New text must go
+  into the locales from now on.)*
+- Every `parse_mode="HTML"` message must `html.escape` all user-provided text (names, titles,
+  message text). Prices are never read from `callback_data`; read them from the DB.
+- Download jobs use a private temp dir (`_new_job_dir()`) and delete it in `finally`.
 - Every downloaded/temp file must be deleted after sending or on error (try/finally).
 - Never log or commit secrets. `cookies/` and `.env` are gitignored.
 - Don't ask questions unless truly blocked; make sensible decisions and record them in
@@ -86,7 +113,7 @@ Files with secrets (gitignored): `.env`, `storage/cookies.txt`, `cookies/`, `*.s
 | # | Phase | Status |
 |---|---|---|
 | 0 | Audit: CLAUDE.md, PROGRESS.md, deploy.sh, DEPLOY.md | ✅ Done |
-| 1 | Bugs + UI (fix PROGRESS.md bug list, unify keyboards, start locales) | ⏳ Next |
+| 1 | Bugs + UI (fix PROGRESS.md bug list, unify keyboards, start locales) | 🔄 1a ✅ HIGH/CRITICAL bugs · 1b ⏳ Medium/Low bugs + UI |
 | 2 | PostgreSQL + unified ID (Alembic migrations, one user key across tables) | ⬜ Todo |
 | 3 | Speed + parallel + cache (per-job temp dirs, timeouts, worker pool, file_id cache everywhere) | ⬜ Todo |
 | 4 | Platforms (wire `services/downloader/router.py`, per-platform modules) | ⬜ Todo |

@@ -1,4 +1,5 @@
 from datetime import datetime
+from html import escape
 from aiogram import Router, F
 from aiogram.types import Message
 from app.keyboards.reply import main_menu_kb
@@ -25,7 +26,7 @@ async def cabinet(message: Message):
     stats_lines = "\n".join(f"  • {p}: {c} ta" for p, c in platform_rows) if platform_rows else "  Hali yo'q"
 
     await message.answer(
-        f"👤 <b>Kabinetim</b>\n\nIsm: {message.from_user.first_name}\n"
+        f"👤 <b>Kabinetim</b>\n\nIsm: {escape(message.from_user.first_name or '')}\n"
         f"ID: <code>{message.from_user.id}</code>\nStatus: {status}\n"
         f"Yuklab olishlar: {user.daily_downloads} / {limit_text}{expiry_line}\n\n"
         f"📊 <b>Statistikangiz</b>\nJami yuklangan: {total} ta\n{stats_lines}",

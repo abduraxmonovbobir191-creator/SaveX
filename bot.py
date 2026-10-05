@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ensure_runtime_dirs, cleanup_stale_temp
 from app.handlers import setup_routers
 from app.database.session import engine
 from app.database.models import Base
@@ -12,6 +12,8 @@ from app.services.scheduler import run_scheduler
 logging.basicConfig(level=logging.INFO)
 
 async def main():
+    ensure_runtime_dirs()
+    cleanup_stale_temp()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

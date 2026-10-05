@@ -12,3 +12,7 @@ storage/
 
 cookies/
 .deploy_prev_commit
+
+# local-only files (kept on the server, never committed)
+ig.json
+app/handlers/user/download.py.bak
