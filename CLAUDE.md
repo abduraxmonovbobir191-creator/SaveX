@@ -1,3 +1,4 @@
+Read HANDOFF.md first: product vision, status, workflow.
 # SaveX — @SaveXStorageBot
 
 Telegram bot that downloads media (video, photo, gallery, audio/MP3) from social
