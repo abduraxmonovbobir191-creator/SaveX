@@ -8,7 +8,7 @@ class TooLargeError(Exception):
 _RULES = (
     ("err_too_large", ("larger than", "max-filesize", "too large", "too big", "exceeds")),
     ("err_private", ("private", "protected", "only available for registered users who follow")),
-    ("err_login", ("sign in", "not a bot", "login required", "log in", "login_required", "cookies",
+    ("err_login", ("sign in", "not a bot", "login", "log in", "cookies", "checkpoint",
                    "confirm your age", "age-restricted", "age restricted", "inappropriate for some users",
                    "authentication", "empty media response")),
     ("err_unsupported", ("unsupported url",)),

@@ -11,5 +11,8 @@
   "lib_audio_title": "🎵 <b>My music</b> (last {count})",
   "lib_videos_empty": "🎬 <b>My videos</b>\n\nYou haven't downloaded any videos yet.",
   "lib_audio_empty": "🎵 <b>My music</b>\n\nYou haven't downloaded any music yet.",
-  "lib_hint": "ℹ️ To download again, send the link to the bot."
+  "lib_hint": "ℹ️ To download again, send the link to the bot.",
+  "err_cookies": "🔑 {platform} is not allowing this link right now: the bot's {platform} session (cookies) is missing or expired. The admin has been notified, please try again later.",
+  "admin_cookies_expired": "⚠️ {platform} cookies expired.\nRefresh the file: {file} (no restart needed). See DEPLOY.md, \"Cookies\" section.",
+  "admin_cookies_missing": "⚠️ {platform} cookies missing.\nAdd the file: {file} (no restart needed). See DEPLOY.md, \"Cookies\" section."
 }

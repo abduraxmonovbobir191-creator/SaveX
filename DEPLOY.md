@@ -29,7 +29,7 @@ venv/bin/pip install -r requirements.txt     # gallery-dl ham shu yerda
 cp .env.example .env
 nano .env                       # BOT_TOKEN, ADMIN_IDS, DATABASE_URL ni kiriting
 # storage/ va storage/temp bot ishga tushganda o'zi yaratiladi
-# Instagram/YouTube cookies kerak bo'lsa: storage/cookies.txt (Netscape formatida)
+# Instagram/YouTube va boshqalar uchun cookies: 7-bo'limga qarang (cookies/instagram.txt)
 
 chmod +x deploy.sh
 ```
@@ -92,7 +92,8 @@ cd /opt/bots/SaveX
 2. Hozirgi commitni `.deploy_prev_commit` ga saqlaydi (orqaga qaytish uchun).
 3. `ig.json` (git'da endi yo'q, lokal fayl) ni `storage/ig.json` ga ko'chiradi va eski joyda
    symlink qoldiradi, shunda `git pull` uni o'chirib yubormaydi.
-4. `git pull --ff-only`.
+4. `git fetch` + `git merge --ff-only` (yangilanish `cookies/` ichida fayl bo'lgan versiya bo'lsa,
+   rad etiladi; `cookies/` ga deploy hech qachon tegmaydi, 6-bo'limga qarang).
 5. Kutubxonalarni **faqat** `/opt/bots/SaveX/venv` ga o'rnatadi (`venv` bo'lmasa yaratadi).
 6. `alembic.ini` bo'lsa, `alembic upgrade head` bilan migratsiyalarni bajaradi.
 7. `docker-compose.yml` bo'lsa, `docker compose -p savex up -d` (loyiha nomi `savex`,
@@ -157,7 +158,82 @@ du -sh storage/temp              # vaqtinchalik fayllar hajmi
 rm -rf storage/temp/*            # vaqtinchalik fayllarni tozalash (bot to'xtatilganda)
 ```
 
-## 6. Boshqa loyihalar bilan to'qnashmaslik (qoidalar)
+## 6. Cookies (Instagram va boshqa platformalar uchun login)
+
+Instagram rasm/karusel postlari va ko'p YouTube videolari akkauntga kirmasdan ochilmaydi.
+Serverda logda `There is no video in this post` va keyin gallery-dl'dan
+`HTTP redirect to login page` ko'rinsa, sabab shu: cookies yo'q yoki eskirgan.
+
+### Qaysi fayl ishlatiladi
+
+yt-dlp ham, gallery-dl ham bir xil faylni ishlatadi:
+
+| Platforma | Fayl (default) | Env orqali o'zgartirish |
+|---|---|---|
+| Instagram | `/opt/bots/SaveX/cookies/instagram.txt` | `INSTAGRAM_COOKIES=/boshqa/yo'l.txt` |
+| YouTube | `/opt/bots/SaveX/cookies/youtube.txt` | `YOUTUBE_COOKIES` |
+| TikTok | `/opt/bots/SaveX/cookies/tiktok.txt` | `TIKTOK_COOKIES` |
+| Twitter/X | `/opt/bots/SaveX/cookies/twitter.txt` | `TWITTER_COOKIES` |
+| Pinterest | `/opt/bots/SaveX/cookies/pinterest.txt` | `PINTEREST_COOKIES` |
+
+Platforma fayli bo'lmasa, eski umumiy `storage/cookies.txt` ishlatiladi (bor bo'lsa).
+Env o'zgaruvchilari `.env` fayliga yoziladi (`.env.example` ga qarang).
+
+### Qanday qo'shish (birinchi marta)
+
+1. **Alohida (qo'shimcha) Instagram akkaunt** oching. O'zingizning asosiy akkauntingizni
+   ishlatmang: bot kirishi uchun akkaunt bloklanishi mumkin.
+2. Kompyuteringizdagi brauzerda shu akkauntga kiring (login qilib turing).
+3. Brauzer kengaytmasi (masalan "Get cookies.txt LOCALLY") bilan `instagram.com` uchun
+   cookies ni **Netscape formatida** eksport qiling. Fayl birinchi qatori
+   `# Netscape HTTP Cookie File` bo'lishi shart.
+4. Faylni serverga yuklang (kompyuteringizdan):
+   ```bash
+   scp instagram.txt <foydalanuvchi>@<server>:/opt/bots/SaveX/cookies/instagram.txt
+   ```
+5. Serverda ruxsatlarni cheklang:
+   ```bash
+   cd /opt/bots/SaveX
+   chmod 700 cookies
+   chmod 600 cookies/instagram.txt
+   head -n 1 cookies/instagram.txt      # "# Netscape HTTP Cookie File" chiqishi kerak
+   ```
+   (Faqat birinchi qatorni ko'rsating. Faylning ichini hech qayerga — chatga, loglarga,
+   GitHub'ga — yubormang: `sessionid` bilan akkauntga kirish mumkin.)
+6. Botni qayta ishga tushirish **shart emas**: cookies har bir so'rovda qayta o'qiladi.
+   Tekshirish: botga Instagram rasm/karusel havolasini yuboring.
+
+Qo'lda tekshirish (serverda, `venv` bilan):
+
+```bash
+cd /opt/bots/SaveX
+venv/bin/python -m gallery_dl --cookies cookies/instagram.txt -s "<instagram post havolasi>"
+```
+
+### Qanday yangilash (cookies eskirganda)
+
+Cookies eskirsa (Instagram sessiyani tugatsa, parol o'zgarsa, akkaunt chiqib ketsa),
+foydalanuvchiga "sessiya (cookies) yo'q yoki eskirgan" xabari ko'rsatiladi va adminlarga
+**`⚠️ Instagram cookies expired`** xabari keladi (har bir platforma uchun 10 daqiqada
+bir martadan ko'p emas; fayl umuman bo'lmasa `cookies missing`). Yangilash:
+
+1. Brauzerda o'sha akkauntga qayta kiring (kerak bo'lsa, Instagram so'ragan tasdiqlashni bajaring).
+2. Cookies ni yuqoridagi 3-qadamdagidek qaytadan eksport qiling.
+3. Serverdagi faylni **almashtiring** (4–5-qadamlar). Restart kerak emas.
+4. Botga havola yuborib tekshiring. Xabar yana kelsa: akkaunt Instagram tomonidan cheklangan
+   bo'lishi mumkin (checkpoint), brauzerda akkauntni tekshiring.
+
+### Xavfsizlik
+
+- `cookies/` papkasi `.gitignore` da; hech qachon commit qilmang.
+- `deploy.sh` `cookies/` ga umuman tegmaydi (o'qimaydi, o'zgartirmaydi, o'chirmaydi) va git'da
+  `cookies/` ichida fayl bo'lgan versiyani deploy qilishni rad etadi.
+- Bot cookies mazmunini hech qachon loglamaydi. yt-dlp har bir yuklash uchun faylning vaqtinchalik
+  nusxasini oladi va ish tugagach o'chiradi; asl faylni faqat o'qiydi.
+- Docker ishlatilsa, `cookies/` papkasini konteynerga faqat o'qish uchun ulang
+  (`./cookies:/app/cookies:ro`).
+
+## 7. Boshqa loyihalar bilan to'qnashmaslik (qoidalar)
 
 - Papka: faqat `/opt/bots/SaveX`. Boshqa loyiha papkalariga tegmang.
 - Servis: `savex-bot` (docker bo'lsa compose loyiha nomi `savex`, konteynerlar, tarmoqlar va

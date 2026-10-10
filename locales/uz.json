@@ -11,5 +11,8 @@
   "lib_audio_title": "🎵 <b>Musiqalarim</b> (oxirgi {count} ta)",
   "lib_videos_empty": "🎬 <b>Videolarim</b>\n\nHali hech qanday video yuklamagansiz.",
   "lib_audio_empty": "🎵 <b>Musiqalarim</b>\n\nHali hech qanday musiqa yuklamagansiz.",
-  "lib_hint": "ℹ️ Qayta yuklash uchun havolani botga yuboring."
+  "lib_hint": "ℹ️ Qayta yuklash uchun havolani botga yuboring.",
+  "err_cookies": "🔑 {platform} hozir bu havolani yuklashga ruxsat bermayapti: botning {platform} sessiyasi (cookies) yo'q yoki eskirgan. Administratorga xabar berildi, birozdan keyin qayta urinib ko'ring.",
+  "admin_cookies_expired": "⚠️ {platform} cookies expired.\nFaylni yangilang: {file} (restart shart emas). Ko'rsatma: DEPLOY.md, \"Cookies\" bo'limi.",
+  "admin_cookies_missing": "⚠️ {platform} cookies missing.\nFaylni qo'shing: {file} (restart shart emas). Ko'rsatma: DEPLOY.md, \"Cookies\" bo'limi."
 }
